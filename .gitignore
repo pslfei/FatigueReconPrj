@@ -1,0 +1,37 @@
+# Local assistant/editor state
+.ace-tool/
+**/.ace-tool/
+.vs/
+.vscode/
+.idea/
+
+# CMake / Visual Studio generated files
+PstechProject/build_win/
+PstechProject/build_linux/
+PstechProject/verify_build/
+PstechProject/out/
+PstechProject/CMakeFiles/
+PstechProject/CMakeCache.txt
+*.user
+*.suo
+*.VC.db
+
+# Published/deployed output (reproducible from source + sdk/)
+PstechProject/output/
+PstechProject/test_run/*
+!PstechProject/test_run/*.py
+!PstechProject/test_run/README.md
+
+# Temporary logs and generated conversation/export artifacts
+*.log
+PstechProject/build_log*.txt
+PstechProject/2026-*-efatiguereconprj-*.txt
+PstechProject/sdk/visage/lib/linux/libVisageVision o.a
+
+# OS/editor temporary files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.tmp
+*.bak
+*~

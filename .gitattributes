@@ -1,0 +1,31 @@
+* text=auto
+.gitattributes text eol=lf
+.gitignore text eol=lf
+
+*.ps1 text eol=crlf
+*.sh text eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+
+# Keep third-party SDK files byte-for-byte identical to the vendor packages.
+PstechProject/sdk/** -text
+
+# Vendored SDK binaries and model assets must not be line-ending converted.
+*.a binary
+*.bin binary
+*.dll binary
+*.docx binary
+*.exe binary
+*.exp binary
+*.fdp binary
+*.jpg binary
+*.lbf binary
+*.lib binary
+*.png binary
+*.so binary
+*.so.* binary
+*.wfm binary
