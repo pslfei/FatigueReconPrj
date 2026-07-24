@@ -13,6 +13,7 @@ public:
     ~FfmpegDecoder() { cleanup(); }
 
     bool init() {
+        cleanup();
         const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_H264);
         if (!codec) { std::cerr << "H.264 Codec not found" << std::endl; return false; }
         codec_ctx = avcodec_alloc_context3(codec);
@@ -20,6 +21,12 @@ public:
         frame = av_frame_alloc();
         packet = av_packet_alloc();
         return true;
+    }
+
+    void reset() {
+        if (codec_ctx) avcodec_flush_buffers(codec_ctx);
+        if (packet) av_packet_unref(packet);
+        if (frame) av_frame_unref(frame);
     }
 
     bool decode(const unsigned char* data, int size, cv::Mat& out_img) {
@@ -52,7 +59,12 @@ private:
         if (codec_ctx) avcodec_free_context(&codec_ctx);
         if (frame) av_frame_free(&frame);
         if (packet) av_packet_free(&packet);
-        if (sws_ctx) sws_freeContext(sws_ctx);
+        if (sws_ctx) {
+            sws_freeContext(sws_ctx);
+            sws_ctx = nullptr;
+        }
+        last_w = 0;
+        last_h = 0;
     }
     AVCodecContext* codec_ctx;
     AVFrame* frame;

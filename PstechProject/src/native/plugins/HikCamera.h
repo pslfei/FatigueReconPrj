@@ -9,6 +9,7 @@
 
 #include <thread>
 #include <atomic>
+#include <mutex>
 
 class HikCamera : public ICamera {
 public:
@@ -28,8 +29,10 @@ public:
 
     bool Start() override;
     void Stop() override;
+    void SetRecoveryConfig(bool enabled, int frameTimeoutMs, int sdkReconnectIntervalMs, int hardRecoveryTimeoutMs) override;
 
 private:
+    static void CALLBACK ExceptionCallback(DWORD dwType, LONG lUserID, LONG lHandle, void* pUser);
     static void CALLBACK RealDataCallBack(LONG lRealHandle, DWORD dwDataType, BYTE *pBuffer, DWORD dwBufSize, void *pUser);
 #ifdef _WIN32
     static void CALLBACK DecCallBack(long nPort, char * pBuf, long nSize, FRAME_INFO * pFrameInfo, long nUser, long nReserved2);
@@ -37,14 +40,15 @@ private:
     static void CALLBACK DecCallBack(int nPort, char * pBuf, int nSize, FRAME_INFO * pFrameInfo, void* nUser, int nReserved2);
 #endif
     void ProcessDecodedFrame(char* pBuf, int nSize, FRAME_INFO* pFrameInfo);
-    void MockLoop(); // [新增] Mock 线程函数
+    bool ResetDecoder(const BYTE* systemHeader, DWORD headerSize);
+    void CloseDecoder();
+    void ApplySdkReconnectConfig();
 
     LONG m_lUserID;
     LONG m_lRealPlayHandle;
     LONG m_nPort;
     std::string m_ip;
-    
-    // [新增] 线程控制
-    std::thread m_mockThread;
-    std::atomic<bool> m_mockRunning;
+    std::atomic<bool> m_stopping;
+    bool m_sdkInitialized;
+    std::mutex m_decoderMutex;
 };

@@ -3,6 +3,9 @@
 #include <opencv2/opencv.hpp>
 #include "PstechStatus.h"
 #include "RingBuffer.h"
+#include <algorithm>
+#include <chrono>
+#include <mutex>
 
 enum CameraType { CAM_VIRTUAL_FILE=0, CAM_USB=1, CAM_HIKVISION=2, CAM_DVT=3 };
 
@@ -15,6 +18,15 @@ protected:
     int m_targetH = 480;
 
     std::atomic<int> m_lastFrameState;
+    std::atomic<int> m_runtimeStatus{STATUS_DISCONNECTED};
+    std::atomic<bool> m_streamAvailable{false};
+    std::atomic<long long> m_lastValidFrameSteadyMs{0};
+    std::atomic<unsigned long long> m_frameSequence{0};
+
+    std::atomic<bool> m_reconnectEnabled{true};
+    std::atomic<int> m_frameTimeoutMs{3000};
+    std::atomic<int> m_sdkReconnectIntervalMs{5000};
+    std::atomic<int> m_hardRecoveryTimeoutMs{0};
 
 public:
     bool m_checkBlack = true;
@@ -34,13 +46,34 @@ public:
     virtual bool Start() = 0;
     virtual void Stop() = 0;
 
+    virtual void SetRecoveryConfig(bool enabled, int frameTimeoutMs, int sdkReconnectIntervalMs, int hardRecoveryTimeoutMs) {
+        m_reconnectEnabled.store(enabled);
+        m_frameTimeoutMs.store(std::clamp(frameTimeoutMs, 500, 60000));
+        m_sdkReconnectIntervalMs.store(std::clamp(sdkReconnectIntervalMs, 1000, 300000));
+        m_hardRecoveryTimeoutMs.store(std::clamp(hardRecoveryTimeoutMs, 0, 600000));
+    }
+
     void SetStatusCallback(StatusCallback cb) { m_statusCb = cb; }
-    void NotifyStatus(int status, const std::string& msg) { if (m_statusCb) m_statusCb(status, msg.c_str()); }
+    void NotifyStatus(int status, const std::string& msg) {
+        m_runtimeStatus.store(status);
+        if (m_statusCb) m_statusCb(status, msg.c_str());
+    }
 
     virtual int GetFrameState(unsigned char** ptr, int& w, int& h, long long& ts) {
-        *ptr = m_ringBuffer.GetLatest(w, h, ts);
+        int nodeState = FRAME_EMPTY;
+        *ptr = m_ringBuffer.GetLatest(w, h, ts, &nodeState);
         if (*ptr == nullptr) return FRAME_EMPTY;
-        return m_lastFrameState.load();
+
+        if (!m_streamAvailable.load()) return FRAME_BLACK_SCREEN;
+
+        const long long lastValid = m_lastValidFrameSteadyMs.load();
+        const long long now = SteadyNowMs();
+        if (lastValid > 0 && now - lastValid >= m_frameTimeoutMs.load()) {
+            bool wasAvailable = m_streamAvailable.exchange(false);
+            if (wasAvailable) NotifyStatus(STATUS_RECONNECTING, "Video frame timeout; waiting for SDK reconnect");
+            return FRAME_BLACK_SCREEN;
+        }
+        return nodeState;
     }
 
     // Compat
@@ -59,6 +92,21 @@ public:
     }
 
 protected:
+    static long long SteadyNowMs() {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+
+    void MarkStreamUnavailable(int status, const std::string& message) {
+        m_streamAvailable.store(false);
+        NotifyStatus(status, message);
+    }
+
+    void MarkTransportRecovered(const std::string& message) {
+        m_streamAvailable.store(false);
+        NotifyStatus(STATUS_WAITING_FRAME, message);
+    }
+
     void PushErrorFrame(const std::string& errorMsg) {
         cv::Mat black(m_targetH, m_targetW, CV_8UC3, cv::Scalar(10, 10, 10)); 
         int baseline = 0;
@@ -85,20 +133,34 @@ protected:
             resized = frame;
         }
 
+        int frameState = FRAME_OK;
         if (isForcedError) {
-            m_lastFrameState.store(FRAME_BLACK_SCREEN);
+            frameState = FRAME_BLACK_SCREEN;
         }
         else if (m_checkBlack) {
             cv::Scalar meanVal = cv::mean(resized);
             double brightness = (meanVal[0] + meanVal[1] + meanVal[2]) / 3.0;
             m_lastBrightness.store(brightness);
-            m_lastFrameState.store((brightness < m_brightnessThreshold) ? FRAME_BLACK_SCREEN : FRAME_OK);
+            frameState = (brightness < m_brightnessThreshold) ? FRAME_BLACK_SCREEN : FRAME_OK;
         } else {
-            m_lastFrameState.store(FRAME_OK);
+            frameState = FRAME_OK;
         }
+
+        m_lastFrameState.store(frameState);
 
         long long ts = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
-        m_ringBuffer.Write(resized.data, resized.cols, resized.rows, ts);
+        const unsigned long long sequence = m_frameSequence.fetch_add(1) + 1;
+        m_ringBuffer.Write(resized.data, resized.cols, resized.rows, ts, frameState, sequence);
+
+        // 错误占位图不是摄像头产生的有效新帧，不能据此宣布连接恢复。
+        if (!isForcedError) {
+            m_lastValidFrameSteadyMs.store(SteadyNowMs());
+            const bool wasAvailable = m_streamAvailable.exchange(true);
+            const int previousStatus = m_runtimeStatus.exchange(STATUS_CONNECTED);
+            if (!wasAvailable || previousStatus != STATUS_CONNECTED) {
+                if (m_statusCb) m_statusCb(STATUS_CONNECTED, "Video stream is producing frames");
+            }
+        }
     }
 };

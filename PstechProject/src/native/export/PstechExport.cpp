@@ -1,6 +1,7 @@
 ﻿#include "../common/ICamera.h"
 #include "../plugins/CameraFactory.h"
 #include "../pstrack/PsTrackWrapper.h"
+#include <atomic>
 
 #ifdef _WIN32
 #define PSTECH_API __declspec(dllexport)
@@ -10,13 +11,20 @@
 
 static ICamera* g_camera = nullptr;
 static PsTrackWrapper* g_pstrack = nullptr;
-static StatusCallback g_globalStatusCb = nullptr;
+static std::atomic<StatusCallback> g_globalStatusCb{nullptr};
+static bool g_reconnectEnabled = true;
+static int g_frameTimeoutMs = 3000;
+static int g_sdkReconnectIntervalMs = 5000;
+static int g_hardRecoveryTimeoutMs = 0;
 
 extern "C" {
+    PSTECH_API int Pstech_GetAbiVersion() { return 2; }
+
     void InternalStatusCallback(int status, const char* msg) {
-        if (g_globalStatusCb) g_globalStatusCb(status, msg);
+        StatusCallback callback = g_globalStatusCb.load();
+        if (callback) callback(status, msg);
     }
-    PSTECH_API void Pstech_SetStatusCallback(StatusCallback cb) { g_globalStatusCb = cb; }
+    PSTECH_API void Pstech_SetStatusCallback(StatusCallback cb) { g_globalStatusCb.store(cb); }
     
     // [更新] 增加 w, h
     PSTECH_API int Pstech_Camera_Init(int type, const char* conn, const char* u, const char* p, int idx, int w, int h) {
@@ -24,6 +32,11 @@ extern "C" {
         g_camera = CameraFactory::CreateCamera((CameraType)type);
         if (!g_camera) return -1;
         g_camera->SetStatusCallback(InternalStatusCallback);
+        g_camera->SetRecoveryConfig(
+            g_reconnectEnabled,
+            g_frameTimeoutMs,
+            g_sdkReconnectIntervalMs,
+            g_hardRecoveryTimeoutMs);
         // Init 现在总是返回 true (逻辑移到 Start/Loop)
         return g_camera->Init(conn ? conn : "", u ? u : "", p ? p : "", idx, w, h) ? 0 : -2;
     }
@@ -31,6 +44,23 @@ extern "C" {
         if (g_camera) {
             g_camera->m_checkBlack = checkBlack;
             g_camera->m_brightnessThreshold = brightnessThreshold;
+        }
+    }
+    PSTECH_API void Pstech_Camera_SetRecoveryConfig(
+        int enabled,
+        int frameTimeoutMs,
+        int sdkReconnectIntervalMs,
+        int hardRecoveryTimeoutMs) {
+        g_reconnectEnabled = enabled != 0;
+        g_frameTimeoutMs = frameTimeoutMs;
+        g_sdkReconnectIntervalMs = sdkReconnectIntervalMs;
+        g_hardRecoveryTimeoutMs = hardRecoveryTimeoutMs;
+        if (g_camera) {
+            g_camera->SetRecoveryConfig(
+                g_reconnectEnabled,
+                g_frameTimeoutMs,
+                g_sdkReconnectIntervalMs,
+                g_hardRecoveryTimeoutMs);
         }
     }
     PSTECH_API double Pstech_Camera_GetBrightness() {

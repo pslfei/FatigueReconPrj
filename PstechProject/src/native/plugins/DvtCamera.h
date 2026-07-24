@@ -12,6 +12,9 @@
 #endif
 #include "nsdnetinterface.h"
 #include "FfmpegDecoder.h"
+#include <atomic>
+#include <memory>
+#include <mutex>
 
 class DvtCamera : public ICamera {
 public:
@@ -31,14 +34,24 @@ public:
 
     bool Start() override;
     void Stop() override;
+    void SetRecoveryConfig(bool enabled, int frameTimeoutMs, int sdkReconnectIntervalMs, int hardRecoveryTimeoutMs) override;
 private:
+    static int WINAPI EventCallback(WPARAM wParam, LPARAM lParam);
 #ifdef _WIN32
     static int WINAPI MediaDataCallback(HANDLE hOpenChannel, int nChannelNo, int nSubFlow, const char* pStreamData, unsigned long nDataLen, void* lpChannelContext);
 #else
     static int MediaDataCallback(void* hOpenChannel, int nChannelNo, int nSubFlow, const char* pStreamData, unsigned long nDataLen, void* lpChannelContext);
 #endif
     void ProcessStreamData(const char* pData, int nLen);
+    void HandleSdkEvent(WPARAM eventType, LPARAM eventData);
+    bool EventBelongsToThis(WPARAM eventType, LPARAM eventData) const;
+    void ApplySdkReconnectConfig();
     void* m_hLogin;
     void* m_hPreview;
-    FfmpegDecoder* m_decoder;
+    std::unique_ptr<FfmpegDecoder> m_decoder;
+    int m_channel;
+    std::atomic<bool> m_stopping;
+    std::atomic<bool> m_decoderResetPending;
+    std::mutex m_decoderMutex;
+    static std::atomic<DvtCamera*> s_activeInstance;
 };

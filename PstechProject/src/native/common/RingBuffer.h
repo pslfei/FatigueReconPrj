@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstring>
 #include <iostream>
+#include "PstechStatus.h"
 
 // 缓存秒数：30fps * 5s = 150帧
 // 1080P: 1920*1080*3 * 150 = ~900MB
@@ -18,6 +19,8 @@ struct FrameNode {
     int width;
     int height;
     long long timestamp;
+    int frameState;
+    unsigned long long sequence;
     
     FrameNode() {
         // 预分配最大内存，避免运行时 new/malloc 造成抖动
@@ -25,6 +28,8 @@ struct FrameNode {
         width = 0;
         height = 0;
         timestamp = 0;
+        frameState = FRAME_EMPTY;
+        sequence = 0;
     }
 };
 
@@ -41,8 +46,12 @@ public:
     
     // 写入一帧 (生产者)
     // 这是一个极快的内存拷贝操作
-    void Write(const unsigned char* src, int w, int h, long long ts) {
-        if (w * h * 3 > MAX_FRAME_SIZE) {
+    void Write(const unsigned char* src, int w, int h, long long ts, int frameState, unsigned long long sequence) {
+        if (!src || w <= 0 || h <= 0 || w > MAX_WIDTH || h > MAX_HEIGHT) {
+             return;
+        }
+        const size_t frameSize = static_cast<size_t>(w) * static_cast<size_t>(h) * 3U;
+        if (frameSize > MAX_FRAME_SIZE) {
              // 超过预分配大小，丢弃或重新分配(这里选择忽略防止崩)
              return;
         }
@@ -54,7 +63,9 @@ public:
         node.width = w;
         node.height = h;
         node.timestamp = ts;
-        std::memcpy(node.data.data(), src, w * h * 3);
+        node.frameState = frameState;
+        node.sequence = sequence;
+        std::memcpy(node.data.data(), src, frameSize);
         
         // 移动指针 (原子操作)
         int nextHead = (currentHead + 1) % BUFFER_CAPACITY;
@@ -64,7 +75,7 @@ public:
     // 获取最新一帧 (消费者)
     // 返回指针。注意：如果消费者处理太慢(>5秒)，该指针指向的内容可能会被覆盖，产生撕裂。
     // 但对于实时分析，这种概率极低且可接受。
-    unsigned char* GetLatest(int& w, int& h, long long& ts) {
+    unsigned char* GetLatest(int& w, int& h, long long& ts, int* frameState = nullptr, unsigned long long* sequence = nullptr) {
         int currentHead = m_head.load(std::memory_order_acquire);
         
         // 回退一格，获取刚刚写完的那一帧
@@ -76,6 +87,8 @@ public:
         w = node.width;
         h = node.height;
         ts = node.timestamp;
+        if (frameState) *frameState = node.frameState;
+        if (sequence) *sequence = node.sequence;
         return node.data.data();
     }
     
