@@ -4,7 +4,16 @@
 #include <thread>
 #include <algorithm>
 
-const int DVT_HEAD_SIZE = 28;
+namespace {
+constexpr int DVT_HEAD_SIZE = 28;
+
+bool HasAnnexBStartCode(const unsigned char* data, int length, int offset) {
+    if (!data || offset < 0 || length - offset < 3) return false;
+    if (data[offset] != 0x00 || data[offset + 1] != 0x00) return false;
+    if (data[offset + 2] == 0x01) return true;
+    return length - offset >= 4 && data[offset + 2] == 0x00 && data[offset + 3] == 0x01;
+}
+}
 
 ICamera* CreateDvtCamera() { return new DvtCamera(); }
 std::atomic<DvtCamera*> DvtCamera::s_activeInstance{nullptr};
@@ -138,24 +147,22 @@ int DvtCamera::MediaDataCallback(void*, int, int, const char* pStreamData, unsig
     return 0;
 }
 void DvtCamera::ProcessStreamData(const char* pData, int nLen) {
-    if (!pData || nLen < 4 || m_stopping.load()) return;
+    if (!pData || nLen < 3 || m_stopping.load()) return;
     std::lock_guard<std::mutex> lock(m_decoderMutex);
     if (m_decoderResetPending.exchange(false)) m_decoder->reset();
-    const unsigned char* raw = (const unsigned char*)pData;
-    if (nLen >= DVT_HEAD_SIZE + 4) {
-        if (raw[DVT_HEAD_SIZE] == 0x00 && raw[DVT_HEAD_SIZE+1] == 0x00 && 
-            raw[DVT_HEAD_SIZE+2] == 0x00 && raw[DVT_HEAD_SIZE+3] == 0x01) {
-            cv::Mat img;
-            if (m_decoder->decode(raw + DVT_HEAD_SIZE, nLen - DVT_HEAD_SIZE, img)) {
-                if (!img.empty()) PushFrame(img);
-            }
-            return;
-        }
+    const auto* raw = reinterpret_cast<const unsigned char*>(pData);
+    const unsigned char* stream_data = nullptr;
+    int stream_length = 0;
+
+    if (HasAnnexBStartCode(raw, nLen, DVT_HEAD_SIZE)) {
+        stream_data = raw + DVT_HEAD_SIZE;
+        stream_length = nLen - DVT_HEAD_SIZE;
+    } else if (HasAnnexBStartCode(raw, nLen, 0)) {
+        stream_data = raw;
+        stream_length = nLen;
     }
-    if (raw[0] == 0x00 && raw[1] == 0x00 && raw[2] == 0x00 && raw[3] == 0x01) {
-        cv::Mat img;
-        if (m_decoder->decode(raw, nLen, img)) {
-            if (!img.empty()) PushFrame(img);
-        }
-    }
+    if (!stream_data) return;
+
+    cv::Mat img;
+    if (m_decoder->decode(stream_data, stream_length, img) && !img.empty()) PushFrame(img);
 }

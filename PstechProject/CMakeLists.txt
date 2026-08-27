@@ -97,6 +97,11 @@ target_link_libraries(PstechNative
     ${PLATFORM_LIBS}
 )
 
+enable_testing()
+add_executable(Test_FfmpegDecoder src/native/tests/test_ffmpeg_decoder.cpp)
+target_link_libraries(Test_FfmpegDecoder ${OpenCV_LIBS} ${FFMPEG_LIBS})
+add_test(NAME FfmpegDecoderCodecDetection COMMAND Test_FfmpegDecoder)
+
 # ========== 测试可执行（仅 Linux；链接 .so，Windows 暂不构建） ==========
 if(NOT WIN32)
     set(COMMON_SRC src/native/common/ICamera.cpp src/native/plugins/CameraFactory.cpp)

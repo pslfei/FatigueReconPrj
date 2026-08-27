@@ -1,0 +1,14 @@
+{
+  "id": "auto-detect-dvt-codec",
+  "title": "DVT 摄像头自动识别并解码 H.264/H.265",
+  "status": "completed",
+  "strategy": "ccg-plan -> ccg-execute",
+  "complexity": "M",
+  "risk": "medium",
+  "currentPhase": "4",
+  "nextAction": "可选：使用真实 DVT 设备分别联调 H.264/H.265 码流",
+  "branch": "main",
+  "createdAt": "2026-08-27T09:28:47.7582630+08:00",
+  "completedAt": "2026-08-27T09:48:51.7756500+08:00",
+  "archivedAt": "2026-08-27T09:48:51.7756500+08:00"
+}
